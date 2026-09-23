@@ -1,5 +1,68 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
-export const people=sqliteTable('people',{id:text('id').primaryKey(),auth:text('auth').notNull().unique(),name:text('name').notNull(),cpf:text('cpf').notNull().unique(),phone:text('phone').notNull(),email:text('email').notNull(),code:text('code').notNull().unique(),parent:text('parent'),role:text('role').notNull().default('member'),created:text('created').notNull()});
-export const leads=sqliteTable('leads',{id:text('id').primaryKey(),referrer:text('referrer').notNull(),parentName:text('parent_name').notNull(),parentCpf:text('parent_cpf').notNull(),phone:text('phone').notNull(),childName:text('child_name').notNull(),childCpf:text('child_cpf').notNull().unique(),age:integer('age').notNull(),grade:text('grade').notNull(),status:text('status').notNull().default('new'),benefitKind:text('benefit_kind').notNull().default('legacy_cash'),discountMonth:text('discount_month'),tuition:integer('tuition').notNull().default(0),reward:integer('reward').notNull().default(0),created:text('created').notNull(),consent:text('consent').notNull()});
-export const settings=sqliteTable('settings',{key:text('key').primaryKey(),value:text('value').notNull()});
-export const events=sqliteTable('events',{id:text('id').primaryKey(),actor:text('actor').notNull(),lead:text('lead').notNull(),action:text('action').notNull(),created:text('created').notNull()});
+import {
+  integer,
+  pgTable,
+  text,
+  timestamp,
+  uniqueIndex,
+} from 'drizzle-orm/pg-core';
+
+export const people = pgTable(
+  'people',
+  {
+    id: text('id').primaryKey(),
+    name: text('name').notNull(),
+    cpf: text('cpf').notNull(),
+    phone: text('phone').notNull(),
+    email: text('email').notNull(),
+    code: text('code').notNull(),
+    parent: text('parent'),
+    role: text('role').notNull().default('member'),
+    passwordHash: text('password_hash').notNull(),
+    passwordSalt: text('password_salt').notNull(),
+    created: timestamp('created', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    cpfUnique: uniqueIndex('people_cpf_unique').on(table.cpf),
+    emailUnique: uniqueIndex('people_email_unique').on(table.email),
+    codeUnique: uniqueIndex('people_code_unique').on(table.code),
+  }),
+);
+
+export const leads = pgTable(
+  'leads',
+  {
+    id: text('id').primaryKey(),
+    referrer: text('referrer').notNull(),
+    parentName: text('parent_name').notNull(),
+    parentCpf: text('parent_cpf').notNull(),
+    parentEmail: text('parent_email'),
+    phone: text('phone').notNull(),
+    childName: text('child_name'),
+    childCpf: text('child_cpf'),
+    age: integer('age'),
+    grade: text('grade'),
+    status: text('status').notNull().default('new'),
+    benefitKind: text('benefit_kind').notNull().default('discount'),
+    discountMonth: text('discount_month'),
+    tuition: integer('tuition').notNull().default(0),
+    reward: integer('reward').notNull().default(0),
+    created: timestamp('created', { withTimezone: true }).notNull().defaultNow(),
+    consent: timestamp('consent', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    parentCpfUnique: uniqueIndex('leads_parent_cpf_unique').on(table.parentCpf),
+  }),
+);
+
+export const settings = pgTable('settings', {
+  key: text('key').primaryKey(),
+  value: text('value').notNull(),
+});
+
+export const events = pgTable('events', {
+  id: text('id').primaryKey(),
+  actor: text('actor').notNull(),
+  lead: text('lead').notNull(),
+  action: text('action').notNull(),
+  created: timestamp('created', { withTimezone: true }).notNull().defaultNow(),
+});
