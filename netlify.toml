@@ -3,7 +3,6 @@ command = "pnpm db:migrate && pnpm build"
 
 [build.environment]
 NODE_VERSION = "22"
-PNPM_VERSION = "11.25.0"
 
 [functions]
 node_bundler = "esbuild"
