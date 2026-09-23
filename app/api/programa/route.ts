@@ -106,8 +106,31 @@ export async function POST(req: Request) {
   try {
     await ensureSchema();
     const origin = req.headers.get('origin');
-    if (origin && origin !== new URL(req.url).origin) {
-      return json({ error: 'Origem inválida.' }, 403);
+    if (origin) {
+      let validOrigin = false;
+      try {
+        const originUrl = new URL(origin);
+        const forwardedHost = (req.headers.get('x-forwarded-host') || req.headers.get('host') || '')
+          .split(',')[0]
+          .trim();
+        const forwardedProto = (req.headers.get('x-forwarded-proto') || '')
+          .split(',')[0]
+          .trim();
+
+        if (forwardedHost) {
+          validOrigin =
+            originUrl.host === forwardedHost &&
+            (!forwardedProto || originUrl.protocol === forwardedProto + ':');
+        } else {
+          validOrigin = originUrl.origin === new URL(req.url).origin;
+        }
+      } catch {
+        validOrigin = false;
+      }
+
+      if (!validOrigin) {
+        return json({ error: 'Origem inválida.' }, 403);
+      }
     }
 
     if (Number(req.headers.get('content-length') || 0) > 16000) {
