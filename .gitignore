@@ -1,0 +1,9 @@
+.env
+.env.local
+.env.*.local
+.neon/
+node_modules/
+.next/
+dist/
+.sites-runtime/
+.wrangler/
