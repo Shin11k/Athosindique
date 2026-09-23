@@ -1,38 +1,408 @@
-import {getChatGPTUser} from '@/app/chatgpt-auth';
-import {db,ownerEmail,field,cpfValid,digits} from '@/lib/programa';
-export const dynamic='force-dynamic';
-const json=(v:unknown,status=200)=>Response.json(v,{status,headers:{'Cache-Control':'no-store'}});
-async function me(){const u=await getChatGPTUser();return {u,p:u?await db().prepare('SELECT * FROM people WHERE auth=?').bind(u.userId).first<any>():null};}
-export async function GET(req:Request){try{const url=new URL(req.url),code=url.searchParams.get('code');if(code){const p=await db().prepare('SELECT name,code FROM people WHERE code=?').bind(code).first();return p?json(p):json({error:'Este link não foi encontrado.'},404);}const {u,p}=await me();if(!u)return json({signedIn:false});if(!p){const admin=await db().prepare("SELECT id FROM people WHERE role='admin'").first();return json({signedIn:true,email:u.email,needsRegistration:true,hasAdmin:!!admin,isOwner:u.email.toLowerCase()===ownerEmail()?.toLowerCase()});}const admin=p.role==='admin';const rows=admin?await db().prepare('SELECT l.*,p.name as referrer_name FROM leads l JOIN people p ON p.id=l.referrer ORDER BY l.created DESC').all():await db().prepare('SELECT id,parent_name,status,reward,tuition,benefit_kind,discount_month,created FROM leads WHERE referrer=? ORDER BY created DESC').bind(p.id).all();const network=admin?await db().prepare('SELECT id,name,parent,code,phone,email,cpf,created FROM people ORDER BY created').all():{results:[]};const tuition=await db().prepare("SELECT value FROM settings WHERE key='tuition'").first<{value:string}>();return json({signedIn:true,person:p,leads:rows.results,people:network.results,tuition:Number(tuition?.value||0),discountPercent:50});}catch{return json({error:'Não foi possível carregar os dados. Tente novamente.'},503);}}
-export async function POST(req:Request){try{if(req.headers.get('origin')!==new URL(req.url).origin)return json({error:'Origem inválida.'},403);if(Number(req.headers.get('content-length')||0)>16000)return json({error:'Dados muito extensos.'},413);const b=await req.json() as Record<string,any>,{u,p}=await me();const now=new Date().toISOString();
-if(b.action==='register'){if(!u)return json({error:'Entre na sua conta para continuar.'},401);if(p)return json({error:'Você já tem cadastro.'},409);const name=field(b.name,'o nome'),cpf=digits(field(b.cpf,'o CPF')),phone=digits(field(b.phone,'o telefone')),email=field(b.email,'o e-mail');if(!cpfValid(cpf)||!/^\d{10,11}$/.test(phone)||!/^\S+@\S+\.\S+$/.test(email)||b.consent!==true)throw new Error('Confira CPF, telefone, e-mail e autorização.');let parent=null,role='member';if(b.adminSetup){if(!ownerEmail()||u.email.toLowerCase()!==ownerEmail()?.toLowerCase())return json({error:'Somente o proprietário pode ativar a administração.'},403);role='admin';}else{const sponsor=await db().prepare('SELECT id FROM people WHERE code=?').bind(String(b.code||'')).first<{id:string}>();if(!sponsor)throw new Error('Use um convite válido para participar.');parent=sponsor.id;}const id=crypto.randomUUID();const result=await db().prepare("INSERT INTO people(id,auth,name,cpf,phone,email,code,parent,role,created) SELECT ?,?,?,?,?,?,?,?,?,? WHERE ? != 'admin' OR NOT EXISTS(SELECT 1 FROM people WHERE role='admin')").bind(id,u.userId,name,cpf,phone,email,crypto.randomUUID().replaceAll('-',''),parent,role,now,role).run();if(!result.meta.changes)throw new Error('O administrador já foi configurado.');return json({ok:true});}
-if(b.action==='lead'){const sponsor=await db().prepare('SELECT id FROM people WHERE code=?').bind(String(b.code||'')).first<{id:string}>();if(!sponsor)throw new Error('Link de indicação inválido.');const parentName=field(b.parentName,'o nome do responsável'),parentCpf=digits(field(b.parentCpf,'o CPF do responsável')),phone=digits(field(b.phone,'o telefone')),childName=field(b.childName,'o nome do aluno'),childCpf=digits(field(b.childCpf,'o CPF do aluno')),grade=field(b.grade,'a série');const age=Number(b.age);if(!cpfValid(parentCpf)||!cpfValid(childCpf)||parentCpf===childCpf||!/^\d{10,11}$/.test(phone)||!Number.isInteger(age)||age<1||age>20||b.consent!==true)throw new Error('Confira os CPFs, telefone, idade e autorização.');if(!['Educação Infantil','1º ano','2º ano','3º ano','4º ano','5º ano','6º ano','7º ano','8º ano','9º ano'].includes(grade))throw new Error('Selecione uma série válida.');const added=await db().prepare('INSERT INTO leads(id,referrer,parent_name,parent_cpf,phone,child_name,child_cpf,age,grade,created,consent) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM leads WHERE parent_cpf=?)').bind(crypto.randomUUID(),sponsor.id,parentName,parentCpf,phone,childName,childCpf,age,grade,now,now,parentCpf).run();if(!added.meta.changes)return json({error:'Este responsável já foi indicado. A indicação original foi preservada.'},409);return json({ok:true});}
-if(!p||p.role!=='admin')return json({error:'Acesso restrito ao administrador.'},403);
-if(b.action==='tuition'){const v=Number(b.value);if(!Number.isFinite(v)||v<0||v>100000)throw new Error('Informe um valor entre R$ 0 e R$ 100.000.');await db().prepare("INSERT INTO settings(key,value) VALUES('tuition',?) ON CONFLICT(key) DO UPDATE SET value=excluded.value").bind(String(Math.round(v*100))).run();return json({ok:true});}
-if(b.action==='status'){
- if(!['new','contact','enrolled','discount_applied','cancelled'].includes(b.status))throw new Error('Status inválido.');
- const lead=await db().prepare('SELECT * FROM leads WHERE id=?').bind(String(b.id)).first<any>();
- if(!lead)throw new Error('Indicação não encontrada.');
- if(['paid','discount_applied'].includes(lead.status)){
-  if(b.status===lead.status)return json({ok:true});
-  throw new Error('Um benefício já concluído não pode ser alterado.');
- }
- if(b.status===lead.status&&!(b.status==='enrolled'&&lead.benefit_kind!=='discount'))return json({ok:true});
- let monthly=lead.tuition||0,value=lead.reward,month=lead.discount_month,kind=lead.benefit_kind;
- if(b.status==='enrolled'){
-  const entered=Number(b.referrerTuition);
-  if(!Number.isFinite(entered)||entered<=0||entered>100000)throw new Error('Informe a mensalidade de quem fez a indicação.');
-  month=String(b.discountMonth||'');
-  if(!/^(20[2-9][0-9])-(0[1-9]|1[0-2])$/.test(month))throw new Error('Informe o mês da próxima mensalidade do indicador.');
-  monthly=Math.round(entered*100);value=Math.round(monthly/2);kind='discount';
- }else if(b.status==='discount_applied'){
-  if(lead.status!=='enrolled'||kind!=='discount'||!month)throw new Error('Confirme o desconto na mensalidade do indicador antes de aplicá-lo.');
- }else{monthly=0;value=0;month=null;kind='discount';}
- const results=await db().batch([
-  db().prepare("UPDATE leads SET status=?,reward=?,tuition=?,benefit_kind=?,discount_month=? WHERE id=? AND status=? AND (? NOT IN ('enrolled','discount_applied') OR NOT EXISTS(SELECT 1 FROM leads other WHERE other.parent_cpf=? AND other.id<>? AND other.status IN ('enrolled','paid','discount_applied')))").bind(b.status,value,monthly,kind,month,lead.id,lead.status,b.status,lead.parent_cpf,lead.id),
-  db().prepare('INSERT INTO events(id,actor,lead,action,created) SELECT ?,?,?,?,? WHERE changes()=1').bind(crypto.randomUUID(),p.id,lead.id,b.status,now)
- ]);
- if(!results[0].meta.changes)return json({error:'Este responsável já possui um benefício ou a indicação foi atualizada. Recarregue o painel.'},409);
- return json({ok:true});
-}return json({error:'Ação desconhecida.'},400);
-}catch(e){const msg=e instanceof Error?e.message:'';if(/UNIQUE constraint/i.test(msg))return json({error:'Este CPF já está cadastrado. A indicação original foi preservada.'},409);if(/D1|SQLITE|database|Banco/i.test(msg))return json({error:'Não foi possível salvar. Tente novamente.'},503);return json({error:msg||'Confira os dados e tente novamente.'},400);}}
+import { clearSession, getSession, setSession } from '@/lib/session';
+import {
+  adminSetupKey,
+  cpfValid,
+  digits,
+  exec,
+  field,
+  hashPassword,
+  normalizeEmail,
+  one,
+  query,
+  verifyPassword,
+} from '@/lib/programa';
+
+export const dynamic = 'force-dynamic';
+
+type Row = Record<string, any>;
+
+const json = (value: unknown, status = 200) =>
+  Response.json(value, {
+    status,
+    headers: { 'Cache-Control': 'no-store' },
+  });
+
+async function currentPerson() {
+  const session = await getSession();
+  if (!session) return null;
+  return one<Row>('SELECT * FROM people WHERE id = $1', [session.userId]);
+}
+
+async function hasAdmin() {
+  return !!(await one('SELECT id FROM people WHERE role = $1 LIMIT 1', ['admin']));
+}
+
+export async function GET(req: Request) {
+  try {
+    const url = new URL(req.url);
+    const code = url.searchParams.get('code');
+
+    if (code) {
+      const person = await one<Row>(
+        'SELECT name, code FROM people WHERE code = $1',
+        [code],
+      );
+      return person
+        ? json(person)
+        : json({ error: 'Este link não foi encontrado.' }, 404);
+    }
+
+    const person = await currentPerson();
+    const adminExists = await hasAdmin();
+
+    if (!person) {
+      return json({ signedIn: false, hasAdmin: adminExists });
+    }
+
+    const admin = person.role === 'admin';
+
+    const leads = admin
+      ? await query<Row>(
+          `SELECT l.*, p.name AS referrer_name
+           FROM leads l
+           JOIN people p ON p.id = l.referrer
+           ORDER BY l.created DESC`,
+        )
+      : await query<Row>(
+          `SELECT id, parent_name, parent_email, phone, status, reward, tuition,
+                  benefit_kind, discount_month, created
+           FROM leads
+           WHERE referrer = $1
+           ORDER BY created DESC`,
+          [person.id],
+        );
+
+    const people = admin
+      ? await query<Row>(
+          'SELECT id, name, parent, code, phone, email, cpf, created FROM people ORDER BY created',
+        )
+      : [];
+
+    const tuition = await one<{ value: string }>(
+      "SELECT value FROM settings WHERE key = 'tuition'",
+    );
+
+    return json({
+      signedIn: true,
+      person,
+      leads,
+      people,
+      tuition: Number(tuition?.value || 0),
+      discountPercent: 50,
+      hasAdmin: adminExists,
+    });
+  } catch (error) {
+    console.error(error);
+    return json(
+      { error: 'Não foi possível carregar os dados. Tente novamente.' },
+      503,
+    );
+  }
+}
+
+export async function POST(req: Request) {
+  try {
+    const origin = req.headers.get('origin');
+    if (origin && origin !== new URL(req.url).origin) {
+      return json({ error: 'Origem inválida.' }, 403);
+    }
+
+    if (Number(req.headers.get('content-length') || 0) > 16000) {
+      return json({ error: 'Dados muito extensos.' }, 413);
+    }
+
+    const body = (await req.json()) as Row;
+    const now = new Date().toISOString();
+
+    if (body.action === 'login') {
+      const email = normalizeEmail(body.email);
+      const password = body.password;
+
+      const person = await one<Row>(
+        `SELECT id, password_hash, password_salt
+         FROM people
+         WHERE lower(email) = lower($1)
+         LIMIT 1`,
+        [email],
+      );
+
+      if (
+        !person ||
+        !verifyPassword(password, person.password_salt, person.password_hash)
+      ) {
+        return json({ error: 'E-mail ou senha inválidos.' }, 401);
+      }
+
+      await setSession(person.id);
+      return json({ ok: true });
+    }
+
+    if (body.action === 'logout') {
+      await clearSession();
+      return json({ ok: true });
+    }
+
+    if (body.action === 'register') {
+      const existing = await currentPerson();
+      if (existing) return json({ error: 'Você já está conectado.' }, 409);
+
+      const name = field(body.name, 'o nome');
+      const cpf = digits(field(body.cpf, 'o CPF'));
+      const phone = digits(field(body.phone, 'o telefone'));
+      const email = normalizeEmail(body.email);
+      const { salt, hash } = hashPassword(body.password);
+
+      if (
+        !cpfValid(cpf) ||
+        !/^\d{10,11}$/.test(phone) ||
+        body.consent !== true
+      ) {
+        throw new Error('Confira CPF, telefone, e-mail e autorização.');
+      }
+
+      let parent: string | null = null;
+      let role = 'member';
+
+      if (body.adminSetup) {
+        const expectedKey = adminSetupKey();
+        if (!expectedKey || body.adminKey !== expectedKey) {
+          return json({ error: 'Chave de configuração inválida.' }, 403);
+        }
+        role = 'admin';
+      } else {
+        const sponsor = await one<{ id: string }>(
+          'SELECT id FROM people WHERE code = $1',
+          [String(body.code || '')],
+        );
+        if (!sponsor) throw new Error('Use um convite válido para participar.');
+        parent = sponsor.id;
+      }
+
+      const id = crypto.randomUUID();
+      const code = crypto.randomUUID().replaceAll('-', '');
+
+      const inserted = await query<{ id: string }>(
+        `INSERT INTO people
+          (id, name, cpf, phone, email, code, parent, role, password_hash, password_salt, created)
+         SELECT $1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11
+         WHERE $8 <> 'admin'
+            OR NOT EXISTS (SELECT 1 FROM people WHERE role = 'admin')
+         RETURNING id`,
+        [id, name, cpf, phone, email, code, parent, role, hash, salt, now],
+      );
+
+      if (!inserted.length) {
+        throw new Error('O administrador já foi configurado.');
+      }
+
+      await setSession(id);
+      return json({ ok: true });
+    }
+
+    if (body.action === 'lead') {
+      const sponsor = await one<{ id: string }>(
+        'SELECT id FROM people WHERE code = $1',
+        [String(body.code || '')],
+      );
+
+      if (!sponsor) throw new Error('Link de indicação inválido.');
+
+      const parentName = field(body.parentName, 'o nome do responsável');
+      const parentCpf = digits(field(body.parentCpf, 'o CPF do responsável'));
+      const phone = digits(field(body.phone, 'o telefone'));
+      const parentEmail =
+        typeof body.parentEmail === 'string' && body.parentEmail.trim()
+          ? normalizeEmail(body.parentEmail)
+          : null;
+
+      if (
+        !cpfValid(parentCpf) ||
+        !/^\d{10,11}$/.test(phone) ||
+        body.consent !== true
+      ) {
+        throw new Error('Confira CPF, telefone e autorização.');
+      }
+
+      const inserted = await query<{ id: string }>(
+        `INSERT INTO leads
+          (id, referrer, parent_name, parent_cpf, parent_email, phone, status,
+           benefit_kind, tuition, reward, created, consent)
+         VALUES ($1,$2,$3,$4,$5,$6,'new','discount',0,0,$7,$7)
+         ON CONFLICT (parent_cpf) DO NOTHING
+         RETURNING id`,
+        [
+          crypto.randomUUID(),
+          sponsor.id,
+          parentName,
+          parentCpf,
+          parentEmail,
+          phone,
+          now,
+        ],
+      );
+
+      if (!inserted.length) {
+        return json(
+          {
+            error:
+              'Este responsável já foi indicado. A indicação original foi preservada.',
+          },
+          409,
+        );
+      }
+
+      return json({ ok: true });
+    }
+
+    const person = await currentPerson();
+    if (!person || person.role !== 'admin') {
+      return json({ error: 'Acesso restrito ao administrador.' }, 403);
+    }
+
+    if (body.action === 'tuition') {
+      const value = Number(body.value);
+      if (!Number.isFinite(value) || value < 0 || value > 100000) {
+        throw new Error('Informe um valor entre R$ 0 e R$ 100.000.');
+      }
+
+      await exec(
+        `INSERT INTO settings(key, value)
+         VALUES ('tuition', $1)
+         ON CONFLICT (key)
+         DO UPDATE SET value = EXCLUDED.value`,
+        [String(Math.round(value * 100))],
+      );
+
+      return json({ ok: true });
+    }
+
+    if (body.action === 'status') {
+      if (
+        !['new', 'contact', 'enrolled', 'discount_applied', 'cancelled'].includes(
+          body.status,
+        )
+      ) {
+        throw new Error('Status inválido.');
+      }
+
+      const lead = await one<Row>('SELECT * FROM leads WHERE id = $1', [
+        String(body.id),
+      ]);
+
+      if (!lead) throw new Error('Indicação não encontrada.');
+
+      if (['paid', 'discount_applied'].includes(lead.status)) {
+        if (body.status === lead.status) return json({ ok: true });
+        throw new Error('Um benefício já concluído não pode ser alterado.');
+      }
+
+      if (
+        body.status === lead.status &&
+        !(body.status === 'enrolled' && lead.benefit_kind !== 'discount')
+      ) {
+        return json({ ok: true });
+      }
+
+      let monthly = Number(lead.tuition || 0);
+      let reward = Number(lead.reward || 0);
+      let month = lead.discount_month as string | null;
+      let kind = String(lead.benefit_kind || 'discount');
+
+      if (body.status === 'enrolled') {
+        const entered = Number(body.referrerTuition);
+        if (!Number.isFinite(entered) || entered <= 0 || entered > 100000) {
+          throw new Error('Informe a mensalidade de quem fez a indicação.');
+        }
+
+        month = String(body.discountMonth || '');
+        if (!/^(20[2-9][0-9])-(0[1-9]|1[0-2])$/.test(month)) {
+          throw new Error('Informe o mês da próxima mensalidade do indicador.');
+        }
+
+        monthly = Math.round(entered * 100);
+        reward = Math.round(monthly / 2);
+        kind = 'discount';
+      } else if (body.status === 'discount_applied') {
+        if (
+          lead.status !== 'enrolled' ||
+          kind !== 'discount' ||
+          !month
+        ) {
+          throw new Error(
+            'Confirme o desconto na mensalidade do indicador antes de aplicá-lo.',
+          );
+        }
+      } else {
+        monthly = 0;
+        reward = 0;
+        month = null;
+        kind = 'discount';
+      }
+
+      const changed = await query<{ lead: string }>(
+        `WITH updated AS (
+           UPDATE leads
+           SET status = $1,
+               reward = $2,
+               tuition = $3,
+               benefit_kind = $4,
+               discount_month = $5
+           WHERE id = $6 AND status = $7
+           RETURNING id
+         )
+         INSERT INTO events(id, actor, lead, action, created)
+         SELECT $8, $9, id, $10, $11
+         FROM updated
+         RETURNING lead`,
+        [
+          body.status,
+          reward,
+          monthly,
+          kind,
+          month,
+          lead.id,
+          lead.status,
+          crypto.randomUUID(),
+          person.id,
+          body.status,
+          now,
+        ],
+      );
+
+      if (!changed.length) {
+        return json(
+          {
+            error:
+              'A indicação foi atualizada em outra sessão. Recarregue o painel.',
+          },
+          409,
+        );
+      }
+
+      return json({ ok: true });
+    }
+
+    return json({ error: 'Ação desconhecida.' }, 400);
+  } catch (error: any) {
+    console.error(error);
+
+    if (error?.code === '23505') {
+      return json(
+        { error: 'Este CPF ou e-mail já está cadastrado.' },
+        409,
+      );
+    }
+
+    if (error?.code === '42P01') {
+      return json(
+        { error: 'O banco Neon ainda não foi inicializado.' },
+        503,
+      );
+    }
+
+    const message =
+      error instanceof Error ? error.message : 'Confira os dados e tente novamente.';
+
+    return json({ error: message || 'Confira os dados e tente novamente.' }, 400);
+  }
+}
