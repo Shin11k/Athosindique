@@ -1,5 +1,5 @@
 [build]
-command = "pnpm build"
+command = "pnpm db:migrate && pnpm build"
 
 [build.environment]
 NODE_VERSION = "22"
