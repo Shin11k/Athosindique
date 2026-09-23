@@ -1,0 +1,1 @@
+ALTER TABLE `leads` ADD `tuition` integer DEFAULT 0 NOT NULL;
