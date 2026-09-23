@@ -2,6 +2,7 @@ import { clearSession, getSession, setSession } from '@/lib/session';
 import {
   adminSetupKey,
   cpfValid,
+  ensureSchema,
   digits,
   exec,
   field,
@@ -34,6 +35,7 @@ async function hasAdmin() {
 
 export async function GET(req: Request) {
   try {
+    await ensureSchema();
     const url = new URL(req.url);
     const code = url.searchParams.get('code');
 
@@ -102,6 +104,7 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    await ensureSchema();
     const origin = req.headers.get('origin');
     if (origin && origin !== new URL(req.url).origin) {
       return json({ error: 'Origem inválida.' }, 403);
