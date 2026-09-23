@@ -4,10 +4,17 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 type Row = Record<string, unknown>;
 let sqlClient: ReturnType<typeof neon> | null = null;
 
+function databaseUrl() {
+  const raw = process.env.DATABASE_URL;
+  if (!raw) throw new Error('DATABASE_URL não configurada.');
+  return raw
+    .trim()
+    .replace(/^["'`]+|["'`]+$/g, '')
+    .replace(/(\.neon\.tech)\)(?=\/|$)/i, '$1');
+}
+
 function sql() {
-  const url = process.env.DATABASE_URL;
-  if (!url) throw new Error('DATABASE_URL não configurada.');
-  if (!sqlClient) sqlClient = neon(url);
+  if (!sqlClient) sqlClient = neon(databaseUrl());
   return sqlClient;
 }
 
