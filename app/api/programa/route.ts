@@ -49,11 +49,20 @@ export async function GET(req: Request) {
         : json({ error: 'Este link não foi encontrado.' }, 404);
     }
 
+    const discountSetting = await one<{ value: string }>(
+      "SELECT value FROM settings WHERE key = 'discount_percent'",
+    );
+    const configuredDiscount = Number(discountSetting?.value ?? 50);
+    const discountPercent =
+      Number.isFinite(configuredDiscount) && configuredDiscount >= 0 && configuredDiscount <= 100
+        ? configuredDiscount
+        : 50;
+
     const person = await currentPerson();
     const adminExists = await hasAdmin();
 
     if (!person) {
-      return json({ signedIn: false, hasAdmin: adminExists });
+      return json({ signedIn: false, hasAdmin: adminExists, discountPercent });
     }
 
     const admin = person.role === 'admin';
@@ -80,17 +89,12 @@ export async function GET(req: Request) {
         )
       : [];
 
-    const tuition = await one<{ value: string }>(
-      "SELECT value FROM settings WHERE key = 'tuition'",
-    );
-
     return json({
       signedIn: true,
       person,
       leads,
       people,
-      tuition: Number(tuition?.value || 0),
-      discountPercent: 50,
+      discountPercent,
       hasAdmin: adminExists,
     });
   } catch (error) {
@@ -294,18 +298,18 @@ export async function POST(req: Request) {
       return json({ error: 'Acesso restrito ao administrador.' }, 403);
     }
 
-    if (body.action === 'tuition') {
+    if (body.action === 'discountPercent') {
       const value = Number(body.value);
-      if (!Number.isFinite(value) || value < 0 || value > 100000) {
-        throw new Error('Informe um valor entre R$ 0 e R$ 100.000.');
+      if (!Number.isFinite(value) || value < 0 || value > 100) {
+        throw new Error('Informe uma porcentagem entre 0% e 100%.');
       }
 
       await exec(
         `INSERT INTO settings(key, value)
-         VALUES ('tuition', $1)
+         VALUES ('discount_percent', $1)
          ON CONFLICT (key)
          DO UPDATE SET value = EXCLUDED.value`,
-        [String(Math.round(value * 100))],
+        [String(Math.round(value))],
       );
 
       return json({ ok: true });
@@ -342,6 +346,7 @@ export async function POST(req: Request) {
       let reward = Number(lead.reward || 0);
       let month = lead.discount_month as string | null;
       let kind = String(lead.benefit_kind || 'discount');
+      let appliedPercent = Number(lead.discount_percent || 0);
 
       if (body.status === 'enrolled') {
         const entered = Number(body.referrerTuition);
@@ -354,8 +359,17 @@ export async function POST(req: Request) {
           throw new Error('Informe o mês da próxima mensalidade do indicador.');
         }
 
+        const discountSetting = await one<{ value: string }>(
+          "SELECT value FROM settings WHERE key = 'discount_percent'",
+        );
+        const configuredDiscount = Number(discountSetting?.value ?? 50);
+        appliedPercent =
+          Number.isFinite(configuredDiscount) && configuredDiscount >= 0 && configuredDiscount <= 100
+            ? configuredDiscount
+            : 50;
+
         monthly = Math.round(entered * 100);
-        reward = Math.round(monthly / 2);
+        reward = Math.round((monthly * appliedPercent) / 100);
         kind = 'discount';
       } else if (body.status === 'discount_applied') {
         if (
@@ -372,6 +386,7 @@ export async function POST(req: Request) {
         reward = 0;
         month = null;
         kind = 'discount';
+        appliedPercent = 0;
       }
 
       const changed = await query<{ lead: string }>(
@@ -381,12 +396,13 @@ export async function POST(req: Request) {
                reward = $2,
                tuition = $3,
                benefit_kind = $4,
-               discount_month = $5
-           WHERE id = $6 AND status = $7
+               discount_month = $5,
+               discount_percent = $6
+           WHERE id = $7 AND status = $8
            RETURNING id
          )
          INSERT INTO events(id, actor, lead, action, created)
-         SELECT $8, $9, id, $10, $11
+         SELECT $9, $10, id, $11, $12
          FROM updated
          RETURNING lead`,
         [
@@ -395,6 +411,7 @@ export async function POST(req: Request) {
           monthly,
           kind,
           month,
+          appliedPercent,
           lead.id,
           lead.status,
           crypto.randomUUID(),
