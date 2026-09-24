@@ -76,7 +76,7 @@ export async function GET(req: Request) {
         )
       : await query<Row>(
           `SELECT id, parent_name, parent_email, phone, status, reward, tuition,
-                  benefit_kind, discount_month, created
+                  benefit_kind, discount_month, discount_percent, created
            FROM leads
            WHERE referrer = $1
            ORDER BY created DESC`,
