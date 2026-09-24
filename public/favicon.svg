@@ -1,1 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#10347a"/><text x="32" y="47" text-anchor="middle" font-family="Georgia" font-size="46" font-weight="bold" fill="#57ba32">A</text></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="Escola Athos">
+  <circle cx="100" cy="100" r="88" fill="#fff" stroke="#082b78" stroke-width="12"/>
+  <path fill="#12c80d" stroke="#082b78" stroke-width="7" stroke-linejoin="round" fill-rule="evenodd"
+    d="M48 43H152V66H136L170 163H142L132 135H68L58 163H30L64 66H48V43ZM83 112H117L100 67L83 112Z"/>
+</svg>
