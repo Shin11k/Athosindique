@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 230 76" role="img" aria-label="Nuvix">
+  <rect x="1" y="1" width="228" height="74" rx="16" fill="#090a0d"/>
+  <path d="M22 54V22c0-5 3-8 8-8h5l20 26V22c0-5 3-8 8-8h5v40c0 5-3 8-8 8h-4L35 35v19c0 5-3 8-8 8h-5v-8Z" fill="#fff"/>
+  <text x="84" y="51" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-size="31" font-weight="700" letter-spacing="-1">Nuvix</text>
+</svg>
