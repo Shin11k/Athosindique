@@ -26,6 +26,7 @@ CREATE TABLE IF NOT EXISTS leads (
   status text NOT NULL DEFAULT 'new',
   benefit_kind text NOT NULL DEFAULT 'discount',
   discount_month text NULL,
+  discount_percent integer NOT NULL DEFAULT 0,
   tuition integer NOT NULL DEFAULT 0,
   reward integer NOT NULL DEFAULT 0,
   created timestamptz NOT NULL DEFAULT now(),
