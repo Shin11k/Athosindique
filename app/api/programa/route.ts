@@ -240,20 +240,38 @@ export async function POST(req: Request) {
         typeof body.parentEmail === 'string' && body.parentEmail.trim()
           ? normalizeEmail(body.parentEmail)
           : null;
+      const childName = field(body.childName, 'o nome da criança');
+      const childCpf = digits(field(body.childCpf, 'o CPF da criança'));
+      const grade = field(body.grade, 'a série da criança');
+      const allowedGrades = new Set([
+        'Educação Infantil',
+        '1º ano',
+        '2º ano',
+        '3º ano',
+        '4º ano',
+        '5º ano',
+        '6º ano',
+        '7º ano',
+        '8º ano',
+        '9º ano',
+      ]);
 
       if (
         !cpfValid(parentCpf) ||
+        !cpfValid(childCpf) ||
         !/^\d{10,11}$/.test(phone) ||
+        !allowedGrades.has(grade) ||
         body.consent !== true
       ) {
-        throw new Error('Confira CPF, telefone e autorização.');
+        throw new Error('Confira os dados do responsável, da criança e a autorização.');
       }
 
       const inserted = await query<{ id: string }>(
         `INSERT INTO leads
-          (id, referrer, parent_name, parent_cpf, parent_email, phone, status,
+          (id, referrer, parent_name, parent_cpf, parent_email, phone,
+           child_name, child_cpf, grade, status,
            benefit_kind, tuition, reward, created, consent)
-         VALUES ($1,$2,$3,$4,$5,$6,'new','discount',0,0,$7,$7)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'new','discount',0,0,$10,$10)
          ON CONFLICT (parent_cpf) DO NOTHING
          RETURNING id`,
         [
@@ -263,6 +281,9 @@ export async function POST(req: Request) {
           parentCpf,
           parentEmail,
           phone,
+          childName,
+          childCpf,
+          grade,
           now,
         ],
       );
