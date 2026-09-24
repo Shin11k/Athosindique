@@ -234,69 +234,57 @@ export async function POST(req: Request) {
       if (!sponsor) throw new Error('Link de indicação inválido.');
 
       const parentName = field(body.parentName, 'o nome do responsável');
-      const parentCpf = digits(field(body.parentCpf, 'o CPF do responsável'));
-      const phone = digits(field(body.phone, 'o telefone'));
-      const parentEmail =
-        typeof body.parentEmail === 'string' && body.parentEmail.trim()
-          ? normalizeEmail(body.parentEmail)
-          : null;
+      const phone = digits(field(body.phone, 'o telefone / WhatsApp'));
       const childName = field(body.childName, 'o nome da criança');
-      const childCpf = digits(field(body.childCpf, 'o CPF da criança'));
-      const grade = field(body.grade, 'a série da criança');
-      const allowedGrades = new Set([
-        'Educação Infantil',
-        '1º ano',
-        '2º ano',
-        '3º ano',
-        '4º ano',
-        '5º ano',
-        '6º ano',
-        '7º ano',
-        '8º ano',
-        '9º ano',
-      ]);
+      const birthDate = String(body.birthDate || '').trim();
+      const today = now.slice(0, 10);
 
       if (
-        !cpfValid(parentCpf) ||
-        !cpfValid(childCpf) ||
         !/^\d{10,11}$/.test(phone) ||
-        !allowedGrades.has(grade) ||
+        !/^\d{4}-\d{2}-\d{2}$/.test(birthDate) ||
+        birthDate > today ||
         body.consent !== true
       ) {
-        throw new Error('Confira os dados do responsável, da criança e a autorização.');
+        throw new Error('Confira o nome, telefone / WhatsApp, criança, data de nascimento e autorização.');
       }
 
-      const inserted = await query<{ id: string }>(
+      const duplicate = await one<{ id: string }>(
+        `SELECT id
+         FROM leads
+         WHERE phone = $1
+           AND lower(child_name) = lower($2)
+           AND birth_date = $3
+         LIMIT 1`,
+        [phone, childName, birthDate],
+      );
+
+      if (duplicate) {
+        return json(
+          {
+            error:
+              'Esta criança já foi indicada com este telefone. A indicação original foi preservada.',
+          },
+          409,
+        );
+      }
+
+      await query<{ id: string }>(
         `INSERT INTO leads
           (id, referrer, parent_name, parent_cpf, parent_email, phone,
-           child_name, child_cpf, grade, status,
+           child_name, child_cpf, grade, birth_date, status,
            benefit_kind, tuition, reward, created, consent)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'new','discount',0,0,$10,$10)
-         ON CONFLICT (parent_cpf) DO NOTHING
+         VALUES ($1,$2,$3,NULL,NULL,$4,$5,NULL,NULL,$6,'new','discount',0,0,$7,$7)
          RETURNING id`,
         [
           crypto.randomUUID(),
           sponsor.id,
           parentName,
-          parentCpf,
-          parentEmail,
           phone,
           childName,
-          childCpf,
-          grade,
+          birthDate,
           now,
         ],
       );
-
-      if (!inserted.length) {
-        return json(
-          {
-            error:
-              'Este responsável já foi indicado. A indicação original foi preservada.',
-          },
-          409,
-        );
-      }
 
       return json({ ok: true });
     }
