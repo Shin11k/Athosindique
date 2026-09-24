@@ -44,6 +44,7 @@ export const leads = pgTable(
     status: text('status').notNull().default('new'),
     benefitKind: text('benefit_kind').notNull().default('discount'),
     discountMonth: text('discount_month'),
+    discountPercent: integer('discount_percent').notNull().default(0),
     tuition: integer('tuition').notNull().default(0),
     reward: integer('reward').notNull().default(0),
     created: timestamp('created', { withTimezone: true }).notNull().defaultNow(),
